@@ -61,7 +61,7 @@ typedef signed __int64 int64_t;
 #endif
 
 #define MY_VERSION "Avs2YUV 0.30"
-#define AUTHORS "Writen by Loren Merritt, modified by BugMaster, Chikuzen\nand currently maintained by DJATOM"
+#define AUTHORS "Writen by Loren Merritt, modified by BugMaster, Chikuzen\nand currently maintained by DJATOM.\nModified by Arnaud de Gérard\n"
 
 #define MAX_FH 10
 #define AVS_BUFSIZE (128*1024)
@@ -100,6 +100,7 @@ int main(int argc, const char* argv[])
     int end = 0;
     int slave = 0;
     int raw_output = 0;
+    bool reverse_scanline = false;
     int interlaced = 0;
     int tff = 0;
     int input_depth = 8;
@@ -146,6 +147,8 @@ int main(int argc, const char* argv[])
                 if (!nostderr) {
                     fprintf(stderr, "Warning: output will not contain any headers!\nYou will have to point resolution, framerate and format (and duration) manually to your reading software.\n");
                 }
+            } else if(!strcmp(argv[i], "-reverse_scanline")) {
+                reverse_scanline = true;
             } else if(!strcmp(argv[i], "-slave")) {
                 slave = 1;
             } else if(!strcmp(argv[i], "-depth")) {
@@ -221,11 +224,14 @@ add_outfile:
         "-frames\tstop after processing this many frames\n"
         "-slave\tinit script and do nothing\n\t(useful for piping from TCPDeliver to AvsNetPipe)\n"
         "-raw\toutput raw data\n"
+        "-reverse_scanline\treverse scanline when piping rawdata\n\t(useful for piping rawdata to FFmpeg)\n"
         "-depth\tspecify input bit depth\n\t(default 8, trying to guess from the script)\n"
         "-fps\toverwrite input framerate\n"
         "-par\tspecify pixel aspect ratio\n"
         "The outfile may be \"-\", meaning stdout.\n"
-        "Output format is yuv4mpeg, as used by MPlayer, FFmpeg, Libav, x264, mjpegtools.\n"
+        "The following output format are available:\n"
+            "\t* yuv4mpeg, as used by MPlayer, FFmpeg, Libav, x264, mjpegtools. (default)\n"
+            "\t* raw data.\n"
         );
         return 2;
     }
@@ -275,6 +281,11 @@ add_outfile:
         interlaced = 1;
         tff = avs_is_tff(inf);
     }
+    if (reverse_scanline && !raw_output) {
+        fprintf(stderr, "Error: reverse scanline is only supported when piping raw data.\n");
+        return 2;
+    }
+
     if(!nostderr)
         fprintf(stderr, "%s\n", MY_VERSION);
     input_width  = inf->width;
@@ -427,10 +438,19 @@ add_outfile:
                 int h = inf->height >> (p ? chroma_v_shift : 0);
                 int pitch = avs_h.func.avs_get_pitch_p(f, planes[p]);
                 const BYTE* data = avs_h.func.avs_get_read_ptr_p(f, planes[p]);
-                for(int y = 0; y < h; y++) {
-                    for(int i = 0; i < out_fhs; i++)
-                        wrote += fwrite(data, 1, w, out_fh[i]);
-                    data += pitch;
+                if (!reverse_scanline) {
+                    for(int y = 0; y < h; y++) {
+                        for(int i = 0; i < out_fhs; i++)
+                            wrote += fwrite(data, 1, w, out_fh[i]);
+                        data += pitch;
+                    }
+                } else {
+                    data += pitch * (h - 1);
+                    for(int y = 0; y < h; y++) {
+                        for(int i = 0; i < out_fhs; i++)
+                            wrote += fwrite(data, 1, w, out_fh[i]);
+                        data -= pitch;
+                    }
                 }
             }
             if(wrote != write_target) {
